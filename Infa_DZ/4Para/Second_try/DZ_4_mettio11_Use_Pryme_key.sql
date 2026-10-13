@@ -1,43 +1,57 @@
--- 12.10.2026
--- проект Метео 11. Основное отличие от версии кода номер 1 наличие PRIMARY KEY
+--Исправления 13.10.2026 18:30
+-- PL/pgSQL-скрипт: собственная структура таблиц "Допуски
+-- сотрудников к работе с метеокомплексами"
+-- проекта "Метео 11".
 
 
-drop table if exists public.employee_qualifications cascade;
-drop table if exists public.qualification_types cascade;
-drop sequence if exists public.seq_employee_qualifications;
-drop sequence if exists public.seq_qualification_types;
-alter table public.employees drop constraint if exists uq_employees_id;
---Часть 1
 
--- ТРАНЗАКЦИЯ 1. 
+-- ТРАНЗАКЦИЯ 1. Структура таблиц + sequence для каждого id.
 
 begin;
 
--- Справочник типов допусков
-create table public.qualification_types
-(
-	id    integer,
-	name  character varying(100)
-);
+do $$
+begin
 
--- Сами допуски, выданные сотрудникам
-create table public.employee_qualifications
-(
-	id                     integer,
-	employee_id            integer,
-	qualification_type_id  integer,
-	issued_date            date,
-	expiry_date            date
-);
+	-- Справочник типов допусков
+	begin
+		execute 'create table public.qualification_types (
+			id    integer,
+			name  character varying(100)
+		)';
+	exception when duplicate_table then
+		raise notice 'Таблица qualification_types уже существует - пропускаем (вложенная транзакция откатилась только для этой команды)';
+	end;
 
--- Последовательности  
-create sequence if not exists public.seq_qualification_types;
-create sequence if not exists public.seq_employee_qualifications;
+	-- Сами допуски, выданные сотрудникам
+	begin
+		execute 'create table public.employee_qualifications (
+			id                     integer,
+			employee_id            integer,
+			qualification_type_id  integer,
+			issued_date            date,
+			expiry_date            date
+		)';
+	exception when duplicate_table then
+		raise notice 'Таблица employee_qualifications уже существует - пропускаем';
+	end;
 
-alter table public.qualification_types alter column id set default
-	nextval('public.seq_qualification_types');
-alter table public.employee_qualifications alter column id set default
-	nextval('public.seq_employee_qualifications');
+	-- Последовательности для каждой таблицы 
+	begin
+		execute 'create sequence public.seq_qualification_types';
+	exception when duplicate_table then
+		raise notice 'Sequence seq_qualification_types уже существует - пропускаем';
+	end;
+
+	begin
+		execute 'create sequence public.seq_employee_qualifications';
+	exception when duplicate_table then
+		raise notice 'Sequence seq_employee_qualifications уже существует - пропускаем';
+	end;
+
+	execute 'alter table public.qualification_types alter column id set default nextval(''public.seq_qualification_types'')';
+	execute 'alter table public.employee_qualifications alter column id set default nextval(''public.seq_employee_qualifications'')';
+
+end $$;
 
 commit;
 
@@ -47,33 +61,48 @@ commit;
 
 begin;
 
-insert into public.qualification_types (name) values
-	('Допуск к работе с ДМК'),
-	('Допуск к работе с ВР'),
-	('Допуск к самостоятельной обработке данных');
-
--- Каждому существующему сотруднику выдаём допуск "Допуск к
--- работе с ДМК"), а каждому второму - ещё и
--- "Допуск к работе с ВР" . Даты выдачи/окончания
--- рассчитываются от даты рождения сотрудника чисто для
--- разнообразия тестовых данных.
 do $$
 declare
 	rec record;
 begin
-	for rec in select id from public.employees order by id loop
-		insert into public.employee_qualifications
-			(employee_id, qualification_type_id, issued_date, expiry_date)
-		values
-			(rec.id, 1, date '2026-01-10', date '2027-01-10');
 
-		if rec.id % 2 = 0 then
+
+	if not exists (select 1 from public.qualification_types) then
+		insert into public.qualification_types (name) values
+			('Допуск к работе с ДМК'),
+			('Допуск к работе с ВР'),
+			('Допуск к самостоятельной обработке данных');
+	else
+		raise notice 'Справочник qualification_types уже заполнен - пропускаем';
+	end if;
+
+	-- Каждому существующему сотруднику выдаём допуск "Допуск к
+	-- работе с ДМК", а каждому второму - ещё и
+	-- "Допуск к работе с ВР".
+	for rec in select id from public.employees order by id loop
+
+		begin
 			insert into public.employee_qualifications
 				(employee_id, qualification_type_id, issued_date, expiry_date)
 			values
-				(rec.id, 2, date '2026-02-15', date '2027-02-15');
+				(rec.id, 1, date '2026-01-10', date '2027-01-10');
+		exception when unique_violation then
+			raise notice 'Допуск ДМК у сотрудника % уже выдан - пропускаем', rec.id;
+		end;
+
+		if rec.id % 2 = 0 then
+			begin
+				insert into public.employee_qualifications
+					(employee_id, qualification_type_id, issued_date, expiry_date)
+				values
+					(rec.id, 2, date '2026-02-15', date '2027-02-15');
+			exception when unique_violation then
+				raise notice 'Допуск ВР у сотрудника % уже выдан - пропускаем', rec.id;
+			end;
 		end if;
+
 	end loop;
+
 end $$;
 
 commit;
@@ -84,45 +113,55 @@ commit;
 
 begin;
 
--- Первичные ключи новых таблиц (нужны как опора для их
--- собственных FK)
-alter table public.qualification_types
-	add constraint pk_qualification_types primary key (id);
+do $$
+begin
 
-alter table public.employee_qualifications
-	add constraint pk_employee_qualifications primary key (id);
+	
+	begin
+		execute 'alter table public.qualification_types add constraint pk_qualification_types primary key (id)';
+	exception when duplicate_object or duplicate_table or invalid_table_definition then
+		raise notice 'pk_qualification_types уже существует - пропускаем';
+	end;
 
--- Внешние ключи
-alter table public.employee_qualifications
-	add constraint fk_eq_employee
-	foreign key (employee_id) references public.employees (id);
+	begin
+		execute 'alter table public.employee_qualifications add constraint pk_employee_qualifications primary key (id)';
+	exception when duplicate_object or duplicate_table or invalid_table_definition then
+		raise notice 'pk_employee_qualifications уже существует - пропускаем';
+	end;
 
-alter table public.employee_qualifications
-	add constraint fk_eq_qualification_type
-	foreign key (qualification_type_id) references public.qualification_types (id);
+	begin
+		execute 'alter table public.employee_qualifications add constraint fk_eq_employee foreign key (employee_id) references public.employees (id)';
+	exception when duplicate_object or duplicate_table or invalid_table_definition then
+		raise notice 'fk_eq_employee уже существует - пропускаем';
+	end;
 
--- Обязательность полей
-alter table public.qualification_types
-	alter column name set not null;
+	begin
+		execute 'alter table public.employee_qualifications add constraint fk_eq_qualification_type foreign key (qualification_type_id) references public.qualification_types (id)';
+	exception when duplicate_object or duplicate_table or invalid_table_definition then
+		raise notice 'fk_eq_qualification_type уже существует - пропускаем';
+	end;
 
-alter table public.employee_qualifications
-	alter column employee_id set not null;
-alter table public.employee_qualifications
-	alter column qualification_type_id set not null;
-alter table public.employee_qualifications
-	alter column issued_date set not null;
+	execute 'alter table public.qualification_types alter column name set not null';
+	execute 'alter table public.employee_qualifications alter column employee_id set not null';
+	execute 'alter table public.employee_qualifications alter column qualification_type_id set not null';
+	execute 'alter table public.employee_qualifications alter column issued_date set not null';
 
--- Один и тот же допуск одному сотруднику выдаётся только один раз
-alter table public.employee_qualifications
-	add constraint uq_eq_employee_qualification
-	unique (employee_id, qualification_type_id);
+	begin
+		execute 'alter table public.employee_qualifications add constraint uq_eq_employee_qualification unique (employee_id, qualification_type_id)';
+	exception when duplicate_object or duplicate_table or invalid_table_definition then
+		raise notice 'uq_eq_employee_qualification уже существует - пропускаем';
+	end;
 
--- Дата окончания действия допуска не может быть раньше выдачи
-alter table public.employee_qualifications
-	add constraint chk_eq_expiry_after_issue
-	check (expiry_date is null or expiry_date >= issued_date);
+	begin
+		execute 'alter table public.employee_qualifications add constraint chk_eq_expiry_after_issue check (expiry_date is null or expiry_date >= issued_date)';
+	exception when duplicate_object or duplicate_table or invalid_table_definition then
+		raise notice 'chk_eq_expiry_after_issue уже существует - пропускаем';
+	end;
+
+end $$;
 
 commit;
+
 
 
 -- Проверка
