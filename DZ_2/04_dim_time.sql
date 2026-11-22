@@ -1,17 +1,16 @@
-
--- Скрипт 4.
--- Таблица dim_time: по одной строке на каждый месяц.
--- Выполнять в pgAdmin (база dataparts). 
-
+ 
+-- Скрипт 4. Ресурс «Время» (PostgreSQL): по строке на месяц.
+-- Код | Дата начала | Дата окончания | Название месяца | Год | Номер квартала | Название квартала
+ 
 
 CREATE TABLE IF NOT EXISTS dim_time (
-    id integer PRIMARY KEY,   
-    month_start date NOT NULL,     
-    month_end date NOT NULL,      
-    month_name text NOT NULL,      
-    year_no integer NOT NULL,      
-    quarter_no integer NOT NULL,      
-    quarter_name text NOT NULL       
+    id integer PRIMARY KEY, -- Код: год*100 + номер месяца (например, 202011)
+    month_start date NOT NULL, -- Дата начала месяца
+    month_end date NOT NULL, -- Дата окончания месяца
+    month_name text NOT NULL, -- Название месяца
+    year_no integer NOT NULL, -- Год
+    quarter_no integer NOT NULL, -- Номер квартала
+    quarter_name text NOT NULL -- Название квартала
 );
 
 COMMENT ON TABLE  dim_time IS 'Ресурс «Время»: календарь по месяцам';
@@ -58,20 +57,29 @@ BEGIN
 END
 $fn$;
 
--- Период данных Front: ноябрь 2020 - декабрь 2023 
--- Чтобы расширить календарь, поменяйть даты и запустить.
-SELECT fill_dim_time('2020-11-01', '2023-12-31') AS months_added;
+-- Период данных Front: ноябрь 2020 - декабрь 2023 (декабрь 2023 неполный).
+
+DO $time$
+DECLARE
+    v_added integer;
+BEGIN
+    -- вложенная транзакция: при ошибке заполнения она откатится целиком
+    BEGIN
+        v_added := fill_dim_time('2020-11-01', '2023-12-31');
+        RAISE NOTICE 'dim_time: добавлено месяцев %', v_added;
+    EXCEPTION WHEN OTHERS THEN
+        RAISE WARNING 'dim_time: ошибка %', SQLERRM;
+    END;
+END
+$time$;
 
 -- Результат
-
---   Код | Дата начала месяца | Дата окончания месяца | Название месяца | Год | Номер квартала | Название квартала
-
-SELECT id AS "Код",
-       month_start AS "Дата начала месяца",
-       month_end AS "Дата окончания месяца",
-       month_name AS "Название месяца",
-       year_no AS "Год",
-       quarter_no AS "Номер квартала",
-       quarter_name AS "Название квартала"
+SELECT id            AS "Код",
+       month_start   AS "Дата начала месяца",
+       month_end     AS "Дата окончания месяца",
+       month_name    AS "Название месяца",
+       year_no       AS "Год",
+       quarter_no    AS "Номер квартала",
+       quarter_name  AS "Название квартала"
 FROM dim_time
 ORDER BY id;
