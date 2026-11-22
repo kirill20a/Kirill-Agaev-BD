@@ -1,20 +1,17 @@
--- =====================================================================
--- Скрипт 2. 
--- Выполнять в SSMS или в VS Code (расширение SQL Server).
---
--- Для каждого ресурса два запроса:
---   (а) ВЫБОРКА - обычный SELECT: что именно переносим;
---   (б) ГЕНЕРАТОР - выдаёт по строке на запись: select load_dim_NNN(...);
-
-
+ 
+-- Скрипт 2. Выборка ресурсов (MS SQL, база Front)
+-- Для каждого ресурса: (а) SELECT - что переносим;
+-- (б) генератор - строки insert для скрипта 3 (столбец [sql]).
+ 
 
 USE Front;
 GO
 
-
+ 
 -- НАПРАВЛЕНИЕ 1. Анализ закупки продукции
-
--- Ресурсы: dim_ranges, dim_categories, dim_products, dim_vendor_groups, dim_vendors
+-- Ресурсы направления: dim_ranges, dim_categories, dim_products, dim_vendor_groups, dim_vendors
+-- Время: dim_time (скрипт 04_dim_time.sql)
+ 
 
 -- 1.1 Единицы измерения (ресурс «Единица измерения») -> dim_ranges
 -- (а) выборка
@@ -23,14 +20,15 @@ SELECT id AS external_id,
        portionrate AS factor
 FROM [size];
 
--- (б) генератор строк для скрипта
-SELECT 'select load_dim_ranges('
+-- (б) генератор строк для скрипта 3
+SELECT 'insert into dim_ranges(external_id, name, factor) values ('
      + isnull(cast(id as varchar(50)), 'null')
      + ', '
      + isnull('''' + replace(cast(sizeid as nvarchar(max)), '''', '''''') + '''', 'null')
      + ', '
      + isnull(cast(cast(portionrate as decimal(28, 10)) as varchar(50)), 'null')
      + ');'
+    AS [sql]
 FROM [size];
 
 -- 1.2 Категории товаров (иерархия) -> dim_categories
@@ -41,80 +39,74 @@ SELECT id AS external_id,
 FROM category;
 
 -- (б) генератор строк для скрипта 3
-SELECT 'select load_dim_categories('
+SELECT 'insert into dim_categories(external_id, name, parent_external_id) values ('
      + isnull(cast(id as varchar(50)), 'null')
      + ', '
      + isnull('''' + replace(cast(description as nvarchar(max)), '''', '''''') + '''', 'null')
      + ', '
      + isnull(cast(case when coalesce(ParentID, 0) = 0 then null else ParentID end as varchar(50)), 'null')
      + ');'
+    AS [sql]
 FROM category;
 
--- 1.3 Номенклатура(ресурс «Товар»)-> dim_products
+-- 1.3 Номенклатура (ресурс «Товар») -> dim_products
 -- (а) выборка
 SELECT id AS external_id,
        productid AS code,
-       description AS name,
-       CategoryID AS category_external_id,
-       SizeID AS range_external_id
+       description AS name
 FROM product;
 
--- (б) генератор строк для скрипта
-SELECT 'select load_dim_products('
+-- (б) генератор строк для скрипта 3
+SELECT 'insert into dim_products(external_id, code, name) values ('
      + isnull(cast(id as varchar(50)), 'null')
      + ', '
      + isnull('''' + replace(cast(productid as nvarchar(max)), '''', '''''') + '''', 'null')
      + ', '
      + isnull('''' + replace(cast(description as nvarchar(max)), '''', '''''') + '''', 'null')
-     + ', '
-     + isnull(cast(CategoryID as varchar(50)), 'null')
-     + ', '
-     + isnull(cast(SizeID as varchar(50)), 'null')
      + ');'
+    AS [sql]
 FROM product;
 
--- 1.4 Группы поставщиков->dim_vendor_groups
+-- 1.4 Группы поставщиков -> dim_vendor_groups
 -- (а) выборка
 SELECT vendorgroupid AS external_id,
-       description AS name,
-       flag AS flag
+       description AS name
 FROM vendorgroup;
 
--- (б) генератор строк для скрипта
-SELECT 'select load_dim_vendor_groups('
+-- (б) генератор строк для скрипта 3
+SELECT 'insert into dim_vendor_groups(external_id, name) values ('
      + isnull(cast(vendorgroupid as varchar(50)), 'null')
      + ', '
      + isnull('''' + replace(cast(description as nvarchar(max)), '''', '''''') + '''', 'null')
-     + ', '
-     + isnull(cast(flag as varchar(50)), 'null')
      + ');'
+    AS [sql]
 FROM vendorgroup;
 
--- 1.5 Поставщики(ресурс «Поставщик»)->dim_vendors
+-- 1.5 Поставщики (ресурс «Поставщик») -> dim_vendors
 -- (а) выборка
 SELECT id AS external_id,
-       coalesce(lastname, firstname) AS name,
+       clientid AS name,
        clientgroup AS group_external_id
 FROM vendors;
 
--- (б) генератор строк для скрипта
-SELECT 'select load_dim_vendors('
+-- (б) генератор строк для скрипта 3
+SELECT 'insert into dim_vendors(external_id, name, group_external_id) values ('
      + isnull(cast(id as varchar(50)), 'null')
      + ', '
-     + isnull('''' + replace(cast(coalesce(lastname, firstname) as nvarchar(max)), '''', '''''') + '''', 'null')
+     + isnull('''' + replace(cast(clientid as nvarchar(max)), '''', '''''') + '''', 'null')
      + ', '
      + isnull(cast(clientgroup as varchar(50)), 'null')
      + ');'
+    AS [sql]
 FROM vendors;
 
 
-
+ 
 -- НАПРАВЛЕНИЕ 2. Анализ продажи товара
-
 -- Ресурсы направления: dim_clients
-
--- Общие ресурсы, описанные в других направлениях: dim_products, dim_categories, dim_ranges, dim_personnel
-
+-- Общие ресурсы, описанные в других направлениях (повторно не переносить): dim_products, dim_categories, dim_ranges, dim_personnel
+-- Время: dim_time (скрипт 04_dim_time.sql)
+ 
 
 -- 2.1 Клиенты (ресурс «Клиент») -> dim_clients
 -- (а) выборка
@@ -125,7 +117,7 @@ SELECT id AS external_id,
 FROM clients;
 
 -- (б) генератор строк для скрипта 3
-SELECT 'select load_dim_clients('
+SELECT 'insert into dim_clients(external_id, code, discount, start_date) values ('
      + isnull(cast(id as varchar(50)), 'null')
      + ', '
      + isnull('''' + replace(cast(clientid as nvarchar(max)), '''', '''''') + '''', 'null')
@@ -134,14 +126,15 @@ SELECT 'select load_dim_clients('
      + ', '
      + isnull('''' + convert(varchar(19), startdate, 120) + '''', 'null')
      + ');'
+    AS [sql]
 FROM clients;
 
 
-
+ 
 -- НАПРАВЛЕНИЕ 3. Анализ работы персонала
-
 -- Ресурсы направления: dim_personnel
-
+-- Время: dim_time (скрипт 04_dim_time.sql)
+ 
 
 -- 3.1 Сотрудники (ресурс «Сотрудник») -> dim_personnel
 -- (а) выборка
@@ -154,7 +147,7 @@ SELECT personid AS external_id,
 FROM personnel;
 
 -- (б) генератор строк для скрипта 3
-SELECT 'select load_dim_personnel('
+SELECT 'insert into dim_personnel(external_id, last_name, first_name, is_pos, is_sales, is_deleted) values ('
      + isnull(cast(personid as varchar(50)), 'null')
      + ', '
      + isnull('''' + replace(cast(lastname as nvarchar(max)), '''', '''''') + '''', 'null')
@@ -167,15 +160,19 @@ SELECT 'select load_dim_personnel('
      + ', '
      + isnull(cast(deleteflag as varchar(50)), 'null')
      + ');'
+    AS [sql]
 FROM personnel;
 
 
-
+ 
 -- НАПРАВЛЕНИЕ 4. Анализ остатков
+-- Ресурсы направления: (новых нет)
+-- Общие ресурсы, описанные в других направлениях (повторно не переносить): dim_products, dim_ranges
+-- Время: dim_time (скрипт 04_dim_time.sql)
+ 
 
--- Ресурсы направления:обновленных нет. dim_products, dim_ranges
 
--- Контроль: сколько строк в источнике.
+-- Контроль: сколько строк в источнике (сравнить с count(*) в PostgreSQL после загрузки)
 
 SELECT 'dim_ranges' AS resource, count(*) AS cnt FROM [size]
 UNION ALL
